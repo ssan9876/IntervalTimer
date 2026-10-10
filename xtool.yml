@@ -1,0 +1,8 @@
+version: 1
+bundleID: dev.intervaltimer.app
+product: IntervalTimer
+infoPath: Info.plist
+iconPath: AppIcon.png
+extensions:
+  - product: IntervalTimerWidget
+    infoPath: Widget-Info.plist
