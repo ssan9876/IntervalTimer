@@ -11,20 +11,32 @@ struct RunState: Codable {
     var offset: TimeInterval
     /// When the clock last started running; nil while paused or finished.
     var anchor: Date?
+    /// When the run was started (nil for runs saved by older versions).
+    var startedAt: Date?
+    /// The history entry for this run, once it's been logged.
+    var loggedSessionID: UUID?
 }
 
 enum SettingsKey {
     static let keepAwake = "keepAwake"
     static let audioCues = "audioCues"
+    static let defaultSound = "defaultSound"
+    static let dailyGoalMinutes = "dailyGoalMinutes"
 
     static var audioCuesEnabled: Bool {
         UserDefaults.standard.object(forKey: audioCues) as? Bool ?? true
+    }
+
+    static var defaultCueSound: CueSound {
+        UserDefaults.standard.string(forKey: defaultSound).flatMap(CueSound.init(id:)) ?? .default
     }
 }
 
 @MainActor
 final class TimerEngine: ObservableObject {
     private static let key = "activeRun.v1"
+    /// Runs ended early are only logged if they lasted at least this long.
+    private static let minimumLoggedSeconds = 60
 
     @Published private(set) var run: RunState? {
         didSet { persist() }
@@ -37,16 +49,21 @@ final class TimerEngine: ObservableObject {
     private var ticker: Task<Void, Never>?
     private let liveActivity = LiveActivityController()
     private let audio = AudioCues()
+    private let history: HistoryStore
 
-    init() {
+    init(history: HistoryStore) {
+        self.history = history
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(RunState.self, from: data) {
             run = saved
             segments = saved.workout.segments
             lastIndex = currentIndex
             if isFinished {
+                // Finished while the app wasn't running.
+                logSession(completed: true, end: finishDate)
                 run = nil
                 segments = []
+                persist() // didSet doesn't run in init; don't log it again next launch.
             } else if isRunning {
                 audio.start()
                 startTicking()
@@ -86,6 +103,15 @@ final class TimerEngine: ObservableObject {
         return min(max((elapsed - TimeInterval(s.start)) / TimeInterval(s.seconds), 0), 1)
     }
     var totalRemaining: TimeInterval { total - elapsed }
+    var loggedSessionID: UUID? { run?.loggedSessionID }
+
+    private var cueSound: CueSound { run?.workout.cueSound ?? .default }
+
+    /// When the run reached (or will reach) its end at the current pace.
+    private var finishDate: Date {
+        guard let run, let anchor = run.anchor else { return now }
+        return anchor.addingTimeInterval(total - run.offset)
+    }
 
     // MARK: Controls
 
@@ -94,7 +120,7 @@ final class TimerEngine: ObservableObject {
         guard !segs.isEmpty else { return }
         segments = segs
         now = Date()
-        run = RunState(workout: workout, offset: 0, anchor: now)
+        run = RunState(workout: workout, offset: 0, anchor: now, startedAt: now)
         lastIndex = 0
         lastCountdownBeep = nil
         Notifier.clearDelivered()
@@ -137,6 +163,10 @@ final class TimerEngine: ObservableObject {
     }
 
     func stop() {
+        if run != nil {
+            now = Date()
+            if !isFinished { logSession(completed: false, end: now) }
+        }
         stopTicking()
         Notifier.cancelPending()
         audio.stop()
@@ -193,17 +223,35 @@ final class TimerEngine: ObservableObject {
 
     private func finish(cancelPending: Bool, announce: Bool) {
         guard var r = run else { return }
+        let end = finishDate
         r.offset = total
         r.anchor = nil
         run = r
+        logSession(completed: true, end: end)
         stopTicking()
         if cancelPending { Notifier.cancelPending() }
+        var cueLength: TimeInterval = 0
         if announce {
             Haptics.finished()
-            if SettingsKey.audioCuesEnabled { audio.finishedBeeps() }
+            if SettingsKey.audioCuesEnabled { cueLength = audio.finishedCue(cueSound) }
         }
-        audio.stop(after: 1.5)
+        audio.stop(after: max(1.5, min(cueLength, 10) + 0.3))
         syncLiveActivity()
+    }
+
+    /// Adds the run to the history (once). Time in "Get Ready" doesn't count.
+    private func logSession(completed: Bool, end: Date) {
+        guard var r = run, r.loggedSessionID == nil else { return }
+        let prep = segments.first.map { $0.round == 0 ? $0.seconds : 0 } ?? 0
+        let seconds = max(0, Int((completed ? total : elapsed).rounded()) - prep)
+        guard completed || seconds >= Self.minimumLoggedSeconds else { return }
+        let session = Session(
+            workoutID: r.workout.id, workoutName: r.workout.name, category: r.workout.category,
+            start: r.startedAt ?? end.addingTimeInterval(-TimeInterval(seconds + prep)), end: end,
+            seconds: seconds, completed: completed)
+        history.upsert(session)
+        r.loggedSessionID = session.id
+        run = r
     }
 
     private func tick() {
@@ -221,14 +269,16 @@ final class TimerEngine: ObservableObject {
             let second = Int(remainingInSegment.rounded(.up))
             if (1...3).contains(second), lastCountdownBeep.map({ $0 != (index, second) }) ?? true {
                 lastCountdownBeep = (index, second)
-                audio.countdownBeep()
+                audio.countdownBeep(cueSound)
             }
         }
     }
 
     private func announceTransition() {
         Haptics.transition()
-        if SettingsKey.audioCuesEnabled, isRunning { audio.transitionBeep() }
+        if SettingsKey.audioCuesEnabled, isRunning, let segment = currentSegment {
+            audio.transitionCue(cueSound, name: segment.name)
+        }
         syncLiveActivity()
     }
 

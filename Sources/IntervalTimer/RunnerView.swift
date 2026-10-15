@@ -4,7 +4,11 @@ import UIKit
 
 struct RunnerView: View {
     @EnvironmentObject private var engine: TimerEngine
+    @EnvironmentObject private var history: HistoryStore
     @AppStorage(SettingsKey.keepAwake) private var keepAwake = false
+    @State private var note = ""
+    @State private var category = ActivityCategory.workout
+    @FocusState private var noteFocused: Bool
 
     var body: some View {
         let segment = engine.currentSegment
@@ -13,6 +17,7 @@ struct RunnerView: View {
         ZStack {
             backgroundColor(segment: segment, finished: finished)
                 .ignoresSafeArea()
+                .onTapGesture { noteFocused = false }
 
             VStack(spacing: 16) {
                 header
@@ -52,6 +57,7 @@ struct RunnerView: View {
                 .opacity(0.9)
             Spacer()
             Button {
+                saveLog()
                 engine.stop()
             } label: {
                 Image(systemName: "xmark")
@@ -141,20 +147,25 @@ struct RunnerView: View {
     private var finishedContent: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 96))
+                .font(.system(size: noteFocused ? 44 : 80))
             Text("Done!")
                 .font(.system(size: 48, weight: .heavy))
             Text("\(engine.workout?.name ?? "") · \(formatTime(Int(engine.total)))")
                 .font(.headline)
                 .opacity(0.85)
+            if engine.loggedSessionID != nil {
+                logEditor
+            }
             HStack(spacing: 16) {
                 Button {
+                    saveLog()
                     engine.restart()
                 } label: {
                     Label("Again", systemImage: "arrow.counterclockwise")
                         .frame(maxWidth: .infinity)
                 }
                 Button {
+                    saveLog()
                     engine.stop()
                 } label: {
                     Label("Finish", systemImage: "checkmark")
@@ -166,6 +177,56 @@ struct RunnerView: View {
             .tint(.white)
             .controlSize(.large)
             .padding(.top, 12)
+        }
+        .animation(.easeInOut(duration: 0.25), value: noteFocused)
+        .onChange(of: engine.loggedSessionID, initial: true) { _, id in
+            guard let id, let session = history.session(id: id) else { return }
+            note = session.note
+            category = session.category
+        }
+        .onDisappear(perform: saveLog)
+    }
+
+    /// "What was this for?": a note and category for the run that was just logged.
+    private var logEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("What was this for?")
+                .font(.subheadline.weight(.semibold))
+            TextField("", text: $note,
+                      prompt: Text("e.g. Leg day, study session, cleaning").foregroundStyle(.white.opacity(0.6)))
+                .focused($noteFocused)
+                .submitLabel(.done)
+                .onSubmit(saveLog)
+                .padding(12)
+                .background(.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ActivityCategory.allCases) { option in
+                        Button {
+                            category = option
+                            saveLog()
+                        } label: {
+                            Label(option.title, systemImage: option.icon)
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .foregroundStyle(category == option ? Color.green : .white)
+                                .background(category == option ? .white : .white.opacity(0.2), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func saveLog() {
+        guard let id = engine.loggedSessionID else { return }
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        history.update(id: id) {
+            $0.note = trimmed
+            $0.category = category
         }
     }
 }

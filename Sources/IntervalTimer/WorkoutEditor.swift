@@ -5,11 +5,29 @@ struct WorkoutEditor: View {
     @Binding var workout: Workout
     var showsStart = true
     @EnvironmentObject private var engine: TimerEngine
+    @EnvironmentObject private var sounds: SoundLibrary
 
     var body: some View {
         Form {
             Section("Name") {
                 TextField("Workout name", text: $workout.name)
+            }
+
+            Section {
+                Picker("Used for", selection: $workout.category) {
+                    ForEach(ActivityCategory.allCases) { category in
+                        Label(category.title, systemImage: category.icon).tag(category)
+                    }
+                }
+                NavigationLink {
+                    SoundPicker(selection: $workout.sound, allowsDefault: true)
+                        .navigationTitle("Sound")
+                } label: {
+                    LabeledContent("Sound", value: workout.sound == nil
+                                   ? "Default" : sounds.name(for: workout.cueSound))
+                }
+            } footer: {
+                Text("Runs are logged under this category. You can add a note about each one when it finishes.")
             }
 
             Section {

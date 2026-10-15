@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 import Synchronization
 
-/// Beeps for interval changes, synthesized on the fly (no sound files).
+/// Cues for interval changes: synthesized tones, a spoken interval name, or an imported file.
 ///
 /// While a workout runs, the audio engine keeps playing (silence between beeps). With the
 /// `audio` background mode, that keeps the app running when the phone is locked, so it can
@@ -10,9 +10,13 @@ import Synchronization
 @MainActor
 final class AudioCues {
     private static let sampleRate = 44_100.0
+    /// Used by the sound picker, which is never open while a workout runs.
+    static let previewer = AudioCues()
 
     private let engine = AVAudioEngine()
     private let tones = ToneGenerator(sampleRate: AudioCues.sampleRate)
+    private let speech = AVSpeechSynthesizer()
+    private var filePlayer: AVAudioPlayer?
     private var node: AVAudioSourceNode?
     private var active = false
     private var stopTask: Task<Void, Never>?
@@ -39,32 +43,83 @@ final class AudioCues {
         try? engine.start()
     }
 
-    /// Stops after `delay`, so a final beep can finish playing.
+    /// Stops after `delay`, so a final cue can finish playing.
     func stop(after delay: TimeInterval = 0) {
         guard active else { return }
         stopTask?.cancel()
         stopTask = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             guard !Task.isCancelled, let self else { return }
+            self.silence()
             self.engine.stop()
-            self.tones.clear()
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             self.active = false
         }
     }
 
-    func countdownBeep() {
-        tones.play(frequency: 880, duration: 0.12)
+    func countdownBeep(_ sound: CueSound) {
+        // Voice and imported sounds only replace the interval-change cue; the countdown stays a beep.
+        let pack = if case .tone(let pack) = sound { pack } else { TonePack.classic }
+        tones.play(pack.countdown)
     }
 
-    func transitionBeep() {
-        tones.play(frequency: 1320, duration: 0.45)
-    }
-
-    func finishedBeeps() {
-        for _ in 0..<3 {
-            tones.play(frequency: 1320, duration: 0.16, gapBefore: 0.08)
+    /// Plays the cue for an interval starting. Returns roughly how long it lasts.
+    @discardableResult
+    func transitionCue(_ sound: CueSound, name: String) -> TimeInterval {
+        silence()
+        switch sound {
+        case .tone(let pack):
+            return tones.play(pack.transition)
+        case .voice:
+            return speak(name)
+        case .custom(let id):
+            return playFile(id) ?? tones.play(TonePack.classic.transition)
         }
+    }
+
+    /// Plays the cue for the run finishing. Returns roughly how long it lasts.
+    @discardableResult
+    func finishedCue(_ sound: CueSound) -> TimeInterval {
+        silence()
+        switch sound {
+        case .tone(let pack):
+            return tones.play(pack.finished)
+        case .voice:
+            tones.play(TonePack.classic.finished)
+            return max(1.5, speak("Workout complete"))
+        case .custom(let id):
+            return playFile(id) ?? tones.play(TonePack.classic.finished)
+        }
+    }
+
+    /// Plays a sound once on its own, for the sound picker.
+    func preview(_ sound: CueSound) {
+        start()
+        let length = transitionCue(sound, name: "Work")
+        stop(after: min(length, 6) + 0.3)
+    }
+
+    /// Cuts off whatever is still playing, so cues don't pile up.
+    private func silence() {
+        tones.clear()
+        filePlayer?.stop()
+        filePlayer = nil
+        if speech.isSpeaking { speech.stopSpeaking(at: .immediate) }
+    }
+
+    private func speak(_ text: String) -> TimeInterval {
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.volume = 1
+        speech.speak(utterance)
+        return 0.6 + Double(text.count) * 0.07
+    }
+
+    private func playFile(_ id: UUID) -> TimeInterval? {
+        guard let url = SoundLibrary.fileURL(for: id),
+              let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+        player.play()
+        filePlayer = player
+        return player.duration
     }
 
     /// Phone calls, Siri and route changes stop the engine; start it again afterwards.
@@ -94,66 +149,95 @@ final class AudioCues {
     }
 }
 
-/// Queue of sine-wave beeps rendered on the audio thread.
+/// One synthesized beep.
+struct ToneSpec: Sendable {
+    enum Shape: Sendable {
+        case sine
+        /// Inharmonic partials, like a struck bell. Pair with `decay`.
+        case bell
+        /// Band-limited square: buzzy, digital-watch style.
+        case square
+    }
+
+    var frequency: Double
+    var duration: TimeInterval
+    var gapBefore: TimeInterval = 0
+    var shape: Shape = .sine
+    /// Exponential fade per second (0 = flat).
+    var decay: Double = 0
+    var volume: Double = 0.6
+}
+
+/// Queue of beeps rendered on the audio thread.
 final class ToneGenerator: Sendable {
     private struct Tone {
-        var frequency: Double
+        var spec: ToneSpec
         var delay: Int
-        var remaining: Int
+        var played: Int
         var total: Int
     }
 
-    private struct State {
-        var tones: [Tone] = []
-        var phase = 0.0
-    }
-
     private let sampleRate: Double
-    private let state = Mutex(State())
+    private let state = Mutex([Tone]())
 
     init(sampleRate: Double) {
         self.sampleRate = sampleRate
     }
 
-    func play(frequency: Double, duration: TimeInterval, gapBefore: TimeInterval = 0) {
-        let samples = Int(duration * sampleRate)
-        let tone = Tone(frequency: frequency, delay: Int(gapBefore * sampleRate), remaining: samples, total: samples)
-        state.withLock { $0.tones.append(tone) }
+    /// Queues the tones to play one after another. Returns their total length in seconds.
+    @discardableResult
+    func play(_ specs: [ToneSpec]) -> TimeInterval {
+        let queued = specs.map {
+            Tone(spec: $0, delay: Int($0.gapBefore * sampleRate), played: 0, total: Int($0.duration * sampleRate))
+        }
+        state.withLock { $0.append(contentsOf: queued) }
+        return specs.reduce(0) { $0 + $1.gapBefore + $1.duration }
     }
 
     func clear() {
-        state.withLock { $0.tones.removeAll() }
+        state.withLock { $0.removeAll() }
     }
 
     func render(into buffers: UnsafeMutableAudioBufferListPointer, frames: Int) {
-        state.withLock { s in
+        state.withLock { tones in
             for buffer in buffers {
                 guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
                 for i in 0..<frames { data[i] = 0 }
             }
-            guard !s.tones.isEmpty, let out = buffers.first?.mData?.assumingMemoryBound(to: Float.self) else {
+            guard !tones.isEmpty, let out = buffers.first?.mData?.assumingMemoryBound(to: Float.self) else {
                 return
             }
             let attack = 0.005 * sampleRate, release = 0.03 * sampleRate
             for i in 0..<frames {
-                guard var tone = s.tones.first else { break }
+                guard var tone = tones.first else { break }
                 if tone.delay > 0 {
                     tone.delay -= 1
                 } else {
-                    let played = Double(tone.total - tone.remaining)
-                    let envelope = min(1, played / attack) * min(1, Double(tone.remaining) / release)
-                    out[i] = Float(sin(s.phase) * envelope * 0.6)
-                    s.phase += 2 * .pi * tone.frequency / sampleRate
-                    if s.phase > 2 * .pi { s.phase -= 2 * .pi }
-                    tone.remaining -= 1
+                    let spec = tone.spec
+                    let t = Double(tone.played) / sampleRate
+                    var envelope = min(1, Double(tone.played) / attack) * min(1, Double(tone.total - tone.played) / release)
+                    if spec.decay > 0 { envelope *= exp(-t * spec.decay) }
+                    let phase = 2 * .pi * spec.frequency * t
+                    out[i] = Float(Self.wave(spec.shape, phase) * envelope * spec.volume)
+                    tone.played += 1
                 }
-                if tone.remaining <= 0 {
-                    s.tones.removeFirst()
-                    s.phase = 0
+                if tone.delay == 0 && tone.played >= tone.total {
+                    tones.removeFirst()
                 } else {
-                    s.tones[0] = tone
+                    tones[0] = tone
                 }
             }
+        }
+    }
+
+    private static func wave(_ shape: ToneSpec.Shape, _ p: Double) -> Double {
+        switch shape {
+        case .sine:
+            sin(p)
+        case .bell:
+            (sin(p) + 0.5 * sin(2.76 * p) + 0.25 * sin(5.4 * p) + 0.12 * sin(8.93 * p)) / 1.87
+        case .square:
+            (sin(p) + sin(3 * p) / 3 + sin(5 * p) / 5) * 0.85
         }
     }
 }
