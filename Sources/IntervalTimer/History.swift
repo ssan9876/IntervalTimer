@@ -50,7 +50,9 @@ final class HistoryStore: ObservableObject {
     }
 
     init() {
-        if let data = try? Data(contentsOf: Self.fileURL),
+        if ScreenshotMode.isActive {
+            sessions = ScreenshotMode.sampleSessions().sorted { $0.start > $1.start }
+        } else if let data = try? Data(contentsOf: Self.fileURL),
            let saved = try? JSONDecoder().decode([Session].self, from: data) {
             sessions = saved.sorted { $0.start > $1.start }
         }

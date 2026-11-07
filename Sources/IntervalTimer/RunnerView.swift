@@ -65,7 +65,7 @@ struct RunnerView: View {
                     .frame(width: 44, height: 44)
                     .background(.white.opacity(0.2), in: Circle())
             }
-            .accessibilityLabel("End workout")
+            .accessibilityLabel("End timer")
         }
     }
 

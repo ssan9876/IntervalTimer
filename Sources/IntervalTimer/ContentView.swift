@@ -10,7 +10,7 @@ struct ContentView: View {
     @EnvironmentObject private var history: HistoryStore
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var tab = AppTab.timers
+    @State private var tab = ScreenshotMode.initialTab
 
     var body: some View {
         TabView(selection: $tab) {
@@ -35,6 +35,9 @@ struct ContentView: View {
                 history.save()
             }
         }
+        .task {
+            ScreenshotMode.prepare(engine: engine)
+        }
     }
 }
 
@@ -49,11 +52,12 @@ struct TimersView: View {
     @State private var draft: Workout?
     @State private var showSettings = false
     @State private var notificationsDenied = false
+    @AppStorage(SettingsKey.notificationsBannerDismissed) private var bannerDismissed = false
 
     var body: some View {
         NavigationStack {
             List {
-                if notificationsDenied {
+                if notificationsDenied && !bannerDismissed {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Notifications are off", systemImage: "bell.slash.fill")
@@ -62,11 +66,18 @@ struct TimersView: View {
                             Text("You won't get interval alerts on your iPhone or Apple Watch while the app is in the background.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                            Button("Turn On in Settings") {
-                                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
-                                    openURL(url)
+                            HStack {
+                                Button("Turn On in Settings") {
+                                    if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                                        openURL(url)
+                                    }
                                 }
+                                Spacer()
+                                Button("Not Now") { bannerDismissed = true }
+                                    .foregroundStyle(.secondary)
                             }
+                            // Otherwise a tap anywhere in the row triggers both buttons.
+                            .buttonStyle(.borderless)
                         }
                         .padding(.vertical, 4)
                     }
@@ -103,6 +114,7 @@ struct TimersView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Settings")
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     EditButton()
@@ -115,6 +127,7 @@ struct TimersView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("New timer")
                 }
             }
             .sheet(item: $draft) { workout in
@@ -125,9 +138,14 @@ struct TimersView: View {
             }
         }
         .task {
-            await Notifier.requestAuthorization()
             notificationsDenied = await Notifier.isDenied()
+            switch ScreenshotMode.screen {
+            case .editor: draft = Workout.samples[2]
+            case .settings: showSettings = true
+            default: break
+            }
         }
+        // Also catches the answer to the permission prompt, which makes the scene inactive.
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { notificationsDenied = await Notifier.isDenied() }
@@ -250,7 +268,8 @@ struct WorkoutRow: View {
                     .background(.green, in: Circle())
             }
             .buttonStyle(.borderless)
-            .disabled(workout.segments.isEmpty)
+            .disabled(!workout.canRun)
+            .accessibilityLabel("Start \(workout.name.isEmpty ? "Untitled" : workout.name)")
         }
         .padding(.vertical, 4)
     }
@@ -273,10 +292,22 @@ struct NewWorkoutSheet: View {
                             onSave(workout)
                             dismiss()
                         }
-                        .disabled(workout.steps.isEmpty)
+                        .disabled(!workout.canRun)
                     }
                 }
         }
+    }
+}
+
+enum AppLinks {
+    static let privacy = URL(string: "https://ssan9876.github.io/intervals-site/privacy/")!
+    static let support = URL(string: "https://ssan9876.github.io/intervals-site/support/")!
+
+    static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = info?["CFBundleVersion"] as? String ?? "1"
+        return "\(short) (\(build))"
     }
 }
 
@@ -305,7 +336,7 @@ struct SettingsView: View {
                     }
                     .disabled(!audioCues)
                 } footer: {
-                    Text("Beeps 3-2-1 before each interval ends and plays the sound when the next one starts. Plays over your music without pausing it. Each timer can pick its own sound.")
+                    Text("Beeps 3-2-1 before each interval ends and plays the sound when the next one starts, including with your iPhone locked. Plays over your music without pausing it. Each timer can pick its own sound.\n\nWith audio cues off you still get notifications, but the Lock Screen countdown can't move on to the next interval until you open the app.")
                 }
                 Section {
                     Stepper(value: $goalMinutes, in: 5...600, step: 5) {
@@ -327,6 +358,15 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("Interval alerts are mirrored to a paired Apple Watch automatically. If they don't show up, open the Watch app on your iPhone → Notifications → Intervals and pick “Mirror my iPhone”.")
+                }
+                Section {
+                    Link("Privacy Policy", destination: AppLinks.privacy)
+                    Link("Help & Support", destination: AppLinks.support)
+                    LabeledContent("Version", value: AppLinks.version)
+                } header: {
+                    Text("About")
+                } footer: {
+                    Text("Your timers and log stay on this device. Intervals has no account, no ads and no tracking.")
                 }
             }
             .navigationTitle("Settings")

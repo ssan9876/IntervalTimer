@@ -81,6 +81,11 @@ struct Workout: Identifiable, Codable, Hashable {
         sound.flatMap(CueSound.init(id:)) ?? SettingsKey.defaultCueSound
     }
 
+    /// False when there's nothing to time beyond "Get Ready" (every interval was deleted).
+    var canRun: Bool {
+        steps.contains { $0.seconds > 0 }
+    }
+
     /// The full run flattened into a timeline: optional "Get Ready", then every step for every round.
     var segments: [Segment] {
         var result: [Segment] = []
@@ -139,8 +144,8 @@ extension Workout {
     static var templates: [(title: String, icon: String, workout: Workout)] {
         [
             ("Interval Workout", "figure.run", blank),
-            ("Pomodoro Focus", "laptopcomputer", Workout(
-                name: "Pomodoro", prepSeconds: 5, rounds: 4, steps: [
+            ("Focus Sessions", "laptopcomputer", Workout(
+                name: "Focus 25/5", prepSeconds: 5, rounds: 4, steps: [
                     IntervalStep(name: "Focus", seconds: 25 * 60, colorIndex: 2),
                     IntervalStep(name: "Break", seconds: 5 * 60, colorIndex: 0),
                 ], category: .focus)),
@@ -156,7 +161,7 @@ extension Workout {
     }
 
     static let samples: [Workout] = [
-        Workout(name: "Tabata", prepSeconds: 10, rounds: 8, steps: [
+        Workout(name: "Sprint 20/10", prepSeconds: 10, rounds: 8, steps: [
             IntervalStep(name: "Work", seconds: 20, colorIndex: 1),
             IntervalStep(name: "Rest", seconds: 10, colorIndex: 0),
         ]),
@@ -172,7 +177,7 @@ extension Workout {
             IntervalStep(name: "Plank", seconds: 45, colorIndex: 4),
             IntervalStep(name: "Round Break", seconds: 60, colorIndex: 2),
         ]),
-        Workout(name: "Pomodoro", prepSeconds: 5, rounds: 4, steps: [
+        Workout(name: "Focus 25/5", prepSeconds: 5, rounds: 4, steps: [
             IntervalStep(name: "Focus", seconds: 25 * 60, colorIndex: 2),
             IntervalStep(name: "Break", seconds: 5 * 60, colorIndex: 0),
         ], category: .focus),

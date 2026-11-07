@@ -4,9 +4,10 @@ import Synchronization
 
 /// Cues for interval changes: synthesized tones, a spoken interval name, or an imported file.
 ///
-/// While a workout runs, the audio engine keeps playing (silence between beeps). With the
-/// `audio` background mode, that keeps the app running when the phone is locked, so it can
-/// keep the Live Activity on the current interval. Mixes with music rather than pausing it.
+/// While a run with audio cues is in progress, the audio engine stays on between cues so they
+/// play on time with the phone locked (the `audio` background mode); the running app also keeps
+/// the Live Activity on the current interval. It's off when paused, when the run ends, and when
+/// cues are turned off in Settings. Mixes with music rather than pausing it.
 @MainActor
 final class AudioCues {
     private static let sampleRate = 44_100.0
@@ -86,7 +87,7 @@ final class AudioCues {
             return tones.play(pack.finished)
         case .voice:
             tones.play(TonePack.classic.finished)
-            return max(1.5, speak("Workout complete"))
+            return max(1.5, speak("Timer complete"))
         case .custom(let id):
             return playFile(id) ?? tones.play(TonePack.classic.finished)
         }

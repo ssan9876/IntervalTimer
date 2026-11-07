@@ -1,0 +1,125 @@
+name: iOS
+
+# On pull requests and pushes that touch the app: an unsigned Release build on a Mac, to prove the
+# Xcode build works and that the bundle has what App Store Connect expects.
+# Run manually ("Run workflow") to archive, sign for the App Store and upload to TestFlight.
+on:
+  pull_request:
+    paths:
+      - "Sources/**"
+      - "Resources/**"
+      - "Info.plist"
+      - "Widget-Info.plist"
+      - "project.yml"
+      - "ci/ExportOptions.plist"
+      - ".github/workflows/ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Sources/**"
+      - "Resources/**"
+      - "Info.plist"
+      - "Widget-Info.plist"
+      - "project.yml"
+      - "ci/ExportOptions.plist"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Archive and upload to TestFlight"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Use the newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for release (unsigned check)
+        if: github.event_name != 'workflow_dispatch' || !inputs.upload
+        run: |
+          xcodebuild build \
+            -project IntervalTimer.xcodeproj -scheme IntervalTimer -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CURRENT_PROJECT_VERSION=7 -quiet
+
+      - name: Check the app bundle
+        if: github.event_name != 'workflow_dispatch' || !inputs.upload
+        run: |
+          set -euo pipefail
+          APP=build/Build/Products/Release-iphoneos/IntervalTimer.app
+          WIDGET="$APP/PlugIns/IntervalTimerWidget.appex"
+          get() { /usr/libexec/PlistBuddy -c "Print :$2" "$1/Info.plist"; }
+          fail() { echo "::error::$1"; exit 1; }
+
+          [ "$(get "$APP" CFBundleIdentifier)" = com.sethsander.intervals ] || fail "Wrong app bundle ID"
+          [ "$(get "$WIDGET" CFBundleIdentifier)" = com.sethsander.intervals.widget ] || fail "Wrong widget bundle ID"
+          [ "$(get "$APP" CFBundleShortVersionString)" = "$(get "$WIDGET" CFBundleShortVersionString)" ] || fail "App and widget versions differ"
+          [ "$(get "$APP" CFBundleVersion)" = 7 ] || fail "App build number isn't taken from CURRENT_PROJECT_VERSION"
+          [ "$(get "$WIDGET" CFBundleVersion)" = 7 ] || fail "Widget build number isn't taken from CURRENT_PROJECT_VERSION"
+          [ "$(get "$APP" ITSAppUsesNonExemptEncryption)" = false ] || fail "Missing export compliance key"
+          [ "$(get "$APP" CFBundleDisplayName)" = Intervals ] || fail "Wrong display name"
+          get "$APP" UILaunchScreen >/dev/null || fail "No launch screen, so the app would be letterboxed"
+          get "$APP" CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName >/dev/null || fail "No app icon"
+          [ -f "$APP/Assets.car" ] || fail "No compiled asset catalog"
+          [ -f "$APP/PrivacyInfo.xcprivacy" ] || fail "No privacy manifest in the app"
+          grep -q CA92.1 "$APP/PrivacyInfo.xcprivacy" || plutil -p "$APP/PrivacyInfo.xcprivacy" | grep -q CA92.1 || fail "Privacy manifest doesn't declare UserDefaults"
+          if strings "$APP/IntervalTimer" | grep -q "Hill sprints"; then fail "Screenshot sample data is in the Release build"; fi
+          echo "App bundle looks right." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archive, sign and upload to TestFlight
+        if: github.event_name == 'workflow_dispatch' && inputs.upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then echo "::error::$name is not set. See APP_STORE.md."; exit 1; fi
+          done
+
+          KEY_PATH="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
+          trap 'rm -f "$KEY_PATH"' EXIT
+          AUTH=(-allowProvisioningUpdates
+                -authenticationKeyPath "$KEY_PATH"
+                -authenticationKeyID "$ASC_KEY_ID"
+                -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+
+          # Every upload needs a new build number. App and widget both get it from this setting.
+          BUILD_NUMBER="$GITHUB_RUN_NUMBER"
+
+          xcodebuild archive \
+            -project IntervalTimer.xcodeproj -scheme IntervalTimer -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/IntervalTimer.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            "${AUTH[@]}" -quiet
+
+          sed "s/TEAM_ID/$APPLE_TEAM_ID/" ci/ExportOptions.plist > "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/IntervalTimer.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}"
+
+          echo "Uploaded build $BUILD_NUMBER. It appears in App Store Connect > TestFlight after Apple finishes processing (usually 5 to 30 minutes)." >> "$GITHUB_STEP_SUMMARY"

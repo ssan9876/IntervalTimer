@@ -4,6 +4,11 @@
 <dict>
     <key>CFBundleDisplayName</key>
     <string>Intervals</string>
+    <!-- The app uses no encryption of its own, so App Store Connect doesn't need to ask. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.healthcare-fitness</string>
     <key>UIDeviceFamily</key>
     <array>
         <integer>1</integer>
@@ -23,7 +28,7 @@
     <!-- Lock Screen / Dynamic Island / Apple Watch Smart Stack countdown. -->
     <key>NSSupportsLiveActivities</key>
     <true/>
-    <!-- Audio cues keep playing while locked, which also keeps the Live Activity on the current interval. -->
+    <!-- Audible interval cues play while locked. Only active during a run with audio cues on. -->
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>

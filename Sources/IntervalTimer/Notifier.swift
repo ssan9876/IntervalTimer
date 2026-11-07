@@ -42,7 +42,7 @@ enum Notifier {
         let total = TimeInterval(segments.last?.end ?? 0)
         if total - elapsed > 0.25 {
             let content = UNMutableNotificationContent()
-            content.title = "Workout complete"
+            content.title = "Timer complete"
             content.body = "\(workout.name) · \(formatTime(Int(total)))"
             content.sound = .default
             content.threadIdentifier = threadID
