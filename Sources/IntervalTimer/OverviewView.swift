@@ -6,7 +6,7 @@ struct OverviewView: View {
     @EnvironmentObject private var history: HistoryStore
     @AppStorage(SettingsKey.dailyGoalMinutes) private var goalMinutes = 30
 
-    @State private var month = Calendar.current.dateInterval(of: .month, for: .now)!.start
+    @State private var month = ScreenshotMode.initialMonth ?? Calendar.current.dateInterval(of: .month, for: .now)!.start
     @State private var selectedDay: Date?
     @State private var editing: Session?
 

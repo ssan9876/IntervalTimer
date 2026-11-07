@@ -10,7 +10,7 @@ struct WorkoutEditor: View {
     var body: some View {
         Form {
             Section("Name") {
-                TextField("Workout name", text: $workout.name)
+                TextField("Timer name", text: $workout.name)
             }
 
             Section {
@@ -63,7 +63,7 @@ struct WorkoutEditor: View {
                 Text("Each interval starts automatically when the previous one ends, with a notification on your iPhone and Apple Watch. Swipe to delete, hold and drag to reorder.")
             }
         }
-        .navigationTitle(workout.name.isEmpty ? "Workout" : workout.name)
+        .navigationTitle(workout.name.isEmpty ? "Timer" : workout.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsStart {
@@ -74,7 +74,7 @@ struct WorkoutEditor: View {
                         Label("Start", systemImage: "play.fill")
                             .labelStyle(.titleAndIcon)
                     }
-                    .disabled(workout.segments.isEmpty)
+                    .disabled(!workout.canRun)
                 }
             }
         }
@@ -147,6 +147,8 @@ struct StepEditor: View {
                                 }
                             }
                             .onTapGesture { step.colorIndex = index }
+                            .accessibilityLabel(Palette.names[index])
+                            .accessibilityAddTraits(step.colorIndex == index ? [.isButton, .isSelected] : .isButton)
                         if index < Palette.colors.count - 1 { Spacer(minLength: 0) }
                     }
                 }

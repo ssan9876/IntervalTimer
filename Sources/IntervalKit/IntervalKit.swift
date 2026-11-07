@@ -6,6 +6,8 @@ import SwiftUI
 
 public enum Palette {
     public static let colors: [Color] = [.green, .red, .blue, .orange, .purple, .teal, .pink, .indigo, .gray]
+    /// For VoiceOver, in the same order as `colors`.
+    public static let names = ["Green", "Red", "Blue", "Orange", "Purple", "Teal", "Pink", "Indigo", "Gray"]
     public static let prepIndex = 8
 
     public static func color(_ index: Int) -> Color {
@@ -55,7 +57,7 @@ public struct IntervalActivityAttributes: ActivityAttributes, Sendable {
         public var color: Color { isFinished ? .green : Palette.color(colorIndex) }
 
         public var detail: String {
-            if isFinished { return "Workout complete" }
+            if isFinished { return "Timer complete" }
             var parts: [String] = []
             if round > 0 { parts.append("Round \(round)/\(rounds)") }
             parts.append(next.map { "Next: \($0)" } ?? "Last interval")

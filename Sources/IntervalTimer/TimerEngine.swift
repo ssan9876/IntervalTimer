@@ -22,6 +22,7 @@ enum SettingsKey {
     static let audioCues = "audioCues"
     static let defaultSound = "defaultSound"
     static let dailyGoalMinutes = "dailyGoalMinutes"
+    static let notificationsBannerDismissed = "notificationsBannerDismissed"
 
     static var audioCuesEnabled: Bool {
         UserDefaults.standard.object(forKey: audioCues) as? Bool ?? true
@@ -46,6 +47,7 @@ final class TimerEngine: ObservableObject {
     private(set) var segments: [Segment] = []
     private var lastIndex: Int?
     private var lastCountdownBeep: (index: Int, second: Int)?
+    private var isStarting = false
     private var ticker: Task<Void, Never>?
     private let liveActivity = LiveActivityController()
     private let audio = AudioCues()
@@ -53,7 +55,9 @@ final class TimerEngine: ObservableObject {
 
     init(history: HistoryStore) {
         self.history = history
-        if let data = UserDefaults.standard.data(forKey: Self.key),
+        // Each screenshot starts clean, or the run from the previous one would cover its screen.
+        if !ScreenshotMode.isActive,
+           let data = UserDefaults.standard.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(RunState.self, from: data) {
             run = saved
             segments = saved.workout.segments
@@ -65,7 +69,7 @@ final class TimerEngine: ObservableObject {
                 segments = []
                 persist() // didSet doesn't run in init; don't log it again next launch.
             } else if isRunning {
-                audio.start()
+                startAudio()
                 startTicking()
             }
         }
@@ -115,17 +119,28 @@ final class TimerEngine: ObservableObject {
 
     // MARK: Controls
 
+    /// Asks for notification permission the first time, when the reason is obvious, and starts
+    /// the clock only after the answer so the prompt doesn't eat into "Get Ready".
     func start(_ workout: Workout) {
-        let segs = workout.segments
-        guard !segs.isEmpty else { return }
-        segments = segs
+        guard workout.canRun, !isStarting else { return }
+        isStarting = true
+        Task {
+            await Notifier.requestAuthorization()
+            isStarting = false
+            begin(workout)
+        }
+    }
+
+    func begin(_ workout: Workout) {
+        guard workout.canRun else { return }
+        segments = workout.segments
         now = Date()
         run = RunState(workout: workout, offset: 0, anchor: now, startedAt: now)
         lastIndex = 0
         lastCountdownBeep = nil
         Notifier.clearDelivered()
         reschedule()
-        audio.start()
+        startAudio()
         startTicking()
         announceTransition()
     }
@@ -148,7 +163,7 @@ final class TimerEngine: ObservableObject {
         r.anchor = now
         run = r
         reschedule()
-        audio.start()
+        startAudio()
         startTicking()
         syncLiveActivity()
     }
@@ -204,6 +219,13 @@ final class TimerEngine: ObservableObject {
     }
 
     // MARK: Internals
+
+    /// Background audio exists to play the cues the user asked for, so with cues off nothing
+    /// holds the audio session open. Notifications still arrive, and the Live Activity shows
+    /// "Open Intervals to sync" once it falls behind.
+    private func startAudio() {
+        if SettingsKey.audioCuesEnabled { audio.start() }
+    }
 
     private func seek(to t: TimeInterval) {
         guard var r = run else { return }

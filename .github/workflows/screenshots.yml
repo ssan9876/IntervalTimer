@@ -1,0 +1,46 @@
+name: App Store screenshots
+
+# Builds for the Simulator and captures every store screenshot at the sizes App Store Connect wants.
+# Download them from the "screenshots" artifact on the run's page.
+on:
+  pull_request:
+    paths:
+      - "Sources/IntervalTimer/**"
+      - "ci/screenshots.sh"
+      - ".github/workflows/screenshots.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Use the newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Build for the Simulator
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild build \
+            -project IntervalTimer.xcodeproj -scheme IntervalTimer -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO -quiet
+
+      - name: Take screenshots
+        run: bash ci/screenshots.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots
+          if-no-files-found: error

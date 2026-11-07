@@ -9,3 +9,11 @@ DerivedData/
 
 /xtool
 /.bsp
+
+# Generated on the cloud Mac from project.yml
+*.xcodeproj
+/build
+/screenshots
+
+# App Store Connect API keys never belong in the repo
+*.p8
