@@ -101,7 +101,9 @@ Made for iPhone and iPad.
 - "Do you or your third-party partners collect data from this app?" **No, we do not collect data from this app.**
 - Result shown on the store: **Data Not Collected**.
 
-**Age rating questionnaire.** Answer honestly with what's in front of you. The app has no violence, gambling, mature content, web browsing, chat, ads, or content shared between users, and gives no medical advice. Accept whatever rating Apple calculates.
+**Age rating questionnaire**: every answer is None or No, which gives **4+**. The app has no violence, gambling, mature content, web browsing, chat, ads, or content shared between users. It also gives no medical guidance or self-care recommendations: it times what people set up, and its workout and meditation templates are only preset timers.
+
+**Regulated medical device** (App Information, required for the Health & Fitness category): **No.** The app doesn't diagnose, prevent, monitor or treat anything.
 
 **Export compliance**: `ITSAppUsesNonExemptEncryption` is already `false` in Info.plist, so App Store Connect won't ask.
 
@@ -131,7 +133,7 @@ A real photo of the Lock Screen Live Activity would make a strong extra one, sin
 
 ## 5. App Review information (paste into "Notes")
 
-Sign-in required: **No**. Contact: your name, phone and intervaltimersupport@gmail.com.
+Sign-in required: **No** (App Store Connect ticks this by default, so untick it). Contact: your name, phone and intervaltimersupport@gmail.com.
 
 **Attach a screen recording** in the App Review attachment field. About 30 seconds with sound: start "Sprint 20/10", lock the iPhone, and let the beeps be heard on the Lock Screen. Developers of apps like this one report that a recording helped clear 2.5.4 questions.
 
