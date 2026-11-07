@@ -55,7 +55,9 @@ final class TimerEngine: ObservableObject {
 
     init(history: HistoryStore) {
         self.history = history
-        if let data = UserDefaults.standard.data(forKey: Self.key),
+        // Each screenshot starts clean, or the run from the previous one would cover its screen.
+        if !ScreenshotMode.isActive,
+           let data = UserDefaults.standard.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(RunState.self, from: data) {
             run = saved
             segments = saved.workout.segments
